@@ -20,14 +20,16 @@ def compile_model(onnx_path, target="llvm"):
 
 
 
-# ===== 在 compile_encoder.py 替換這段 =====
+	#patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
 	patterns = [
-		("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard())),
-		("kiwipedia.add", is_op("relax.add")(wildcard(), wildcard()))
+	    ("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))
 	]
+	#patterns = [("tensorrt.add", is_op("relax.add")(wildcard(), wildcard()))]
 
 	'''
-	annotate_codegen: 不要 Merge 相鄰的 OP... (註解照舊)
+	annotate_codegen: 不要 Merge 相鄰的 OP，一個 OP 一個 Relax function
+	bind_constants: 綁定常數，如果前面 from_onnx 的 keep_params_in_input=False(預設) 這裡要設成 bind_constants=False
+						 如果前面 from_onnx 的 keep_params_in_input=True		這裡要設成 bind_constants=True(預設)
 	'''
 	mod = relax.transform.FuseOpsByPattern(patterns, bind_constants=False, annotate_codegen=True)(mod)
 	#mod = relax.transform.FuseOpsByPattern(patterns, bind_constants=False)(mod)

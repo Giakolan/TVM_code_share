@@ -20,7 +20,11 @@ def compile_model(onnx_path, target="llvm"):
 
 
 
-	patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
+	#patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
+	patterns = [
+	    ("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard())),
+	    ("kiwipedia.add", is_op("relax.add")(wildcard(), wildcard())),
+	]
 	#patterns = [("tensorrt.add", is_op("relax.add")(wildcard(), wildcard()))]
 
 	'''

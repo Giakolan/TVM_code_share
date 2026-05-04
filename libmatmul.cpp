@@ -80,23 +80,24 @@ void matmul(std::vector<const DLTensor*>& data_entry_,
 
 }
 
-// ===== 在 libmatmul.cpp 最下方加上這段 =====
 
-// -------------------- Add --------------------
-// 逐元素相加 (Element-wise addition)
-void add_elementwise(const float* A, const float* B, float* C, int total_elements) {
-    for (int i = 0; i < total_elements; ++i) {
-        C[i] = A[i] + B[i];
+extern "C" void add(std::vector<const DLTensor*>& data_entry_,
+                    std::vector<int64_t>& A_shape,
+                    std::vector<int64_t>& B_shape) {
+    const DLTensor* A = data_entry_[0];
+    const DLTensor* B = data_entry_[1];
+    const DLTensor* C = data_entry_[2];
+
+    const float* a = static_cast<const float*>(A->data);
+    const float* b = static_cast<const float*>(B->data);
+    float* c = static_cast<float*>(C->data);
+
+    int64_t total = 1;
+    for (int i = 0; i < C->ndim; ++i) {
+        total *= C->shape[i];
     }
-}
 
-// -------------------- Add Wrapper --------------------
-extern "C"
-void kiwipedia_add_op(std::vector<const DLTensor*>& data_entry_, int total_elements) {
-    // 假設 0 和 1 是輸入，2 是輸出 (與你 matmul 的設計一致)
-    const float* A = static_cast<const float*>(data_entry_[0]->data);
-    const float* B = static_cast<const float*>(data_entry_[1]->data);
-    float* C = static_cast<float*>(data_entry_[2]->data);
-
-    add_elementwise(A, B, C, total_elements);
+    for (int64_t i = 0; i < total; ++i) {
+        c[i] = a[i] + b[i];
+    }
 }
