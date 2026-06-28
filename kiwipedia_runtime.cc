@@ -124,22 +124,22 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
     // for instance, we have matmul of [6, 1500, 384] multiply by [384, 384], they are equivalent with [x, n, m] multiply by [m, o]
     // std::cout<<"Run() starts here"<<std::endl;
 
-    A_shape = nodes_[0].GetOpShape()[0]; // vector<int64_t>
+    //A_shape = nodes_[0].GetOpShape()[0]; // vector<int64_t>
     //A_shape = data_entry_[0]->shape; // vector<int64_t>
-    B_shape = nodes_[1].GetOpShape()[0]; // vector<int64_t>
+    //B_shape = nodes_[1].GetOpShape()[0]; // vector<int64_t>
     //B_shape = data_entry_[1]->shape; // vector<int64_t>
     // std::cout<<A_shape<<std::endl;
     // std::cout<<B_shape<<std::endl;
     
-    int64_t x = A_shape[A_shape.size() - 3];
-    int64_t n = A_shape[A_shape.size() - 2];
-    int64_t m = A_shape[A_shape.size() - 1];
-    int64_t o = B_shape[B_shape.size() - 1];
+    //int64_t x = A_shape[A_shape.size() - 3];
+    //int64_t n = A_shape[A_shape.size() - 2];
+    //int64_t m = A_shape[A_shape.size() - 1];
+    //int64_t o = B_shape[B_shape.size() - 1];
     //std::cout<<"X: "<<x<<" N: "<<n<<", M: "<<m<<", O: "<<o<<std::endl;
-    arg_arr.push_back(x);
-    arg_arr.push_back(n);
-    arg_arr.push_back(m);
-    arg_arr.push_back(o);
+    //arg_arr.push_back(x);
+    //arg_arr.push_back(n);
+    //arg_arr.push_back(m);
+    //arg_arr.push_back(o);
     // for (size_t i = 0; i < input_nodes_.size(); ++i) {
     //   auto nid = input_nodes_[i];
     //   if (nodes_[nid].GetOpType() == "input") {
@@ -207,7 +207,7 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
     if (env_path && *env_path) candidates.push_back(env_path);
     candidates.push_back("libmatmul.so");
     candidates.push_back("./libmatmul.so");
-    candidates.push_back("/home/lewis56/tvm/src/runtime/contrib/kiwipedia/libmatmul.so");
+    candidates.push_back("/home/lewis56/tvm-byoc-kiwipedia/tvm/src/runtime/contrib/kiwipedia/libmatmul.so");
 
 
     for (const char* p : candidates) {
@@ -243,17 +243,90 @@ void EnsureAddLoaded() {
         << "Failed to load symbol 'add' from shared library. "
         << "Please make sure libmatmul.so exports function add.";
 }
+
+  std::vector<int64_t> GetRuntimeShape(const DLTensor* t) {
+    std::vector<int64_t> shape;
+    for (int i = 0; i < t->ndim; ++i) {
+      shape.push_back(t->shape[i]);
+    }
+    return shape;
+  }
   // ---------------- 改寫這個：用 dlsym 叫進來 ----------------
   void kiwipedia_matmul(size_t idx) {
-    (void)idx;  // 目前用不到，但保留介面
     EnsureMatmulLoaded();
-    // 直接用外部 .so 的 matmul 實作：就吃 data_entry_ / A_shape / B_shape
-    matmul_fp_(data_entry_, A_shape, B_shape);
+
+    auto inputs = nodes_[idx].GetInputs();
+
+    ICHECK_GE(inputs.size(), 2)
+        << "kiwipedia.matmul expects at least 2 inputs";
+
+    uint32_t a_eid = EntryID(inputs[0]);
+    uint32_t b_eid = EntryID(inputs[1]);
+
+    // 目前 node 的 output entry
+    JSONGraphNodeEntry out_entry;
+    out_entry.id_ = static_cast<uint32_t>(idx);
+    out_entry.index_ = 0;
+    out_entry.version_ = 0;
+    uint32_t c_eid = EntryID(out_entry);
+
+    const DLTensor* A = data_entry_[a_eid];
+    const DLTensor* B = data_entry_[b_eid];
+    const DLTensor* C = data_entry_[c_eid];
+
+    std::vector<const DLTensor*> op_data;
+    op_data.push_back(A);
+    op_data.push_back(B);
+    op_data.push_back(C);
+
+    std::vector<int64_t> shapeA = GetRuntimeShape(A);
+    std::vector<int64_t> shapeB = GetRuntimeShape(B);
+
+    //std::cout << "[DEBUG][runtime] matmul node=" << idx
+    //          << " a_eid=" << a_eid
+    //          << " b_eid=" << b_eid
+    //          << " c_eid=" << c_eid
+    //          << std::endl;
+
+    matmul_fp_(op_data, shapeA, shapeB);
   }
 
   void kiwipedia_add(size_t idx) {
-      EnsureAddLoaded();
-      add_fp_(data_entry_, A_shape, B_shape);
+    EnsureAddLoaded();
+
+    auto inputs = nodes_[idx].GetInputs();
+
+    ICHECK_GE(inputs.size(), 2)
+        << "kiwipedia.add expects at least 2 inputs";
+
+    uint32_t a_eid = EntryID(inputs[0]);
+    uint32_t b_eid = EntryID(inputs[1]);
+
+    JSONGraphNodeEntry out_entry;
+    out_entry.id_ = static_cast<uint32_t>(idx);
+    out_entry.index_ = 0;
+    out_entry.version_ = 0;
+    uint32_t c_eid = EntryID(out_entry);
+
+    const DLTensor* A = data_entry_[a_eid];
+    const DLTensor* B = data_entry_[b_eid];
+    const DLTensor* C = data_entry_[c_eid];
+
+    std::vector<const DLTensor*> op_data;
+    op_data.push_back(A);
+    op_data.push_back(B);
+    op_data.push_back(C);
+
+    std::vector<int64_t> shapeA = GetRuntimeShape(A);
+    std::vector<int64_t> shapeB = GetRuntimeShape(B);
+
+    //std::cout << "[DEBUG][runtime] add node=" << idx
+    //          << " a_eid=" << a_eid
+    //          << " b_eid=" << b_eid
+    //          << " c_eid=" << c_eid
+    //          << std::endl;
+
+    add_fp_(op_data, shapeA, shapeB);
   }
   //void kiwipedia_matmul(size_t idx){
     // open shared library

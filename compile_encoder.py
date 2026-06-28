@@ -4,13 +4,14 @@ from tvm import relax
 from tvm.relax.frontend.onnx import from_onnx  # Correct import path
 from tvm.relax.dpl import is_op, wildcard
 from tvm.contrib import cc
-
+from tvm import tir
 
 def compile_model(onnx_path, target="llvm"):
 	# 1. Load ONNX model
 	onnx_model = onnx.load(onnx_path) 
 	# 2. Convert to Relax IR (updated API)
-	mod = from_onnx(onnx_model, {"input_features": (1, 80, 3000)})# give input shape of both encoder and decoder, make them static. Somer op does not support dynamic shape
+	batch_size = tir.Var("batch_size", "int64")
+	mod = from_onnx(onnx_model, {"input_features": (batch_size, 80, 3000)})# give input shape of both encoder and decoder, make them static. Somer op does not support dynamic shape
 
 	#mod = from_onnx(onnx_model, {"input_ids": (1, 1), "encoder_hidden_states": (1, 1500, 384)})# give input shape of both encoder and decoder, make them static. Somer op does not support dynamic shape
 	
@@ -18,7 +19,8 @@ def compile_model(onnx_path, target="llvm"):
 	#mod=tvm.relax.transform.BindSymbolicVars({"batch_size":1, "encoder_sequence_length_out": 1500})(mod)
 
 
-
+	print("===== After from_onnx =====")
+	mod.show()
 
 	#patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
 	patterns = [

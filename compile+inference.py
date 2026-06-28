@@ -24,7 +24,7 @@ keep_params_in_input: params 是否要當成 input，預設 False 會當成全�
 mod = tvm_onnx.from_onnx(onnx_model, shape_dict= ({"data":(1, 3, 224, 224)}), dtype_dict="float32", keep_params_in_input=False)
 mod.show()
 
-patterns = [("kiwipedia.add", is_op("relax.add")(wildcard(), wildcard()))]
+patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
 
 '''
 annotate_codegen: 不要 Merge 相鄰的 OP，一個 OP 一個 Relax function

@@ -4,6 +4,7 @@ from tvm import relax
 from tvm.relax.frontend.onnx import from_onnx  # Correct import path
 from tvm.relax.dpl import is_op, wildcard
 from tvm.contrib import cc
+from tvm import tir
 
 
 def compile_model(onnx_path, target="llvm"):
@@ -12,19 +13,24 @@ def compile_model(onnx_path, target="llvm"):
 	# 2. Convert to Relax IR (updated API)
 	#mod = from_onnx(onnx_model, {"input_features": (1, 80, 3000)})# give input shape of both encoder and decoder, make them static. Somer op does not support dynamic shape
 
-	mod = from_onnx(onnx_model, {"input_ids": (1, 1), "encoder_hidden_states": (1, 1500, 384)})# give input shape of both encoder and decoder, make them static. Somer op does not support dynamic shape
+	batch_size = tir.Var("batch_size", "int64")
+	decoder_seq_len = tir.Var("decoder_seq_len", "int64")
+	encoder_seq_len = tir.Var("encoder_seq_len", "int64")
+
+	mod = from_onnx(onnx_model, {"input_ids": (batch_size, decoder_seq_len), "encoder_hidden_states": (batch_size, encoder_seq_len, 384)})# give input shape of both encoder and decoder, make them static. Somer op does not support dynamic shape
 	
 	#mod = from_onnx(onnx_model)
 	#mod=tvm.relax.transform.BindSymbolicVars({"batch_size":1, "encoder_sequence_length_out": 1500})(mod)
 
+	print("===== After from_onnx =====")
+	mod.show()
 
 
-
-	#patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
-	patterns = [
-	    ("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard())),
-	    ("kiwipedia.add", is_op("relax.add")(wildcard(), wildcard())),
-	]
+	patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
+	#patterns = [
+	    #("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard())),
+	    #("kiwipedia.add", is_op("relax.add")(wildcard(), wildcard())),
+	#]
 	#patterns = [("tensorrt.add", is_op("relax.add")(wildcard(), wildcard()))]
 
 	'''
