@@ -41,7 +41,10 @@ def compile_model(onnx_path, target="llvm"):
     print("===== After from_onnx decoder_with_past =====")
     mod.show()	
 
-    patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
+    patterns = [
+        ("kiwipedia.kv_cache_kernel", is_op("relax.concat")(wildcard())),
+        ("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard())),
+    ]
 
 
     #patterns = [("tensorrt.add", is_op("relax.add")(wildcard(), wildcard()))]

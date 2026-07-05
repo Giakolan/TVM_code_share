@@ -83,10 +83,16 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
     SetupConstants(consts);
   }
 
-  // ~kiwipedia_Runtime() override {
-  //   VLOG(1) << "Destroying kiwipedia runtime";
-  //   VLOG(1) << "Destroyed kiwipedia runtime";
-  // }
+  ~kiwipedia_Runtime() {
+    if (so_handle_ != nullptr) {
+      dlclose(so_handle_);
+      so_handle_ = nullptr;
+    }
+    if (kv_cache_so_handle_ != nullptr) {
+      dlclose(kv_cache_so_handle_);
+      kv_cache_so_handle_ = nullptr;
+    }
+  }
 
   /*! \brief Run inference using built engine. */
   void Run() override {
@@ -170,10 +176,13 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
       if(nodes_[nid].GetOpType() == "kernel"){
         if(nodes_[nid].GetOpName() == "kiwipedia.matmul")
           kiwipedia_matmul(nid);
-	 else if (nodes_[nid].GetOpName() == "kiwipedia.add")
-	    kiwipedia_add(nid);
+	      else if (nodes_[nid].GetOpName() == "kiwipedia.add")
+	        kiwipedia_add(nid);
+        else if (nodes_[nid].GetOpName() == "kiwipedia.kv_cache_kernel")
+          kiwipedia_kv_cache_kernel(nid);
         // 後續增加其他 OP
-        else;
+        else
+          ICHECK(false) << "Unsupported kiwipedia kernel: " << nodes_[nid].GetOpName();
       }
     }
     // if we directly write data to data_entry_'s [2], then buffer_arr is not necessary
@@ -189,9 +198,16 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
  
   using MatmulFn =
       void (*)(std::vector<const DLTensor*>&, std::vector<int64_t>&, std::vector<int64_t>&);
+
+  using KVCacheFn =
+      void (*)(std::vector<const DLTensor*>&, int64_t, int64_t, int64_t);
+
   // 一定要宣告成 class 成員
   void* so_handle_{nullptr};
+  void* kv_cache_so_handle_{nullptr};
+
   MatmulFn matmul_fp_{nullptr};
+  KVCacheFn kv_cache_fp_{nullptr};
   
   using AddFn =
     void (*)(std::vector<const DLTensor*>&,
@@ -242,6 +258,37 @@ void EnsureAddLoaded() {
     ICHECK(add_fp_ != nullptr)
         << "Failed to load symbol 'add' from shared library. "
         << "Please make sure libmatmul.so exports function add.";
+}
+
+void EnsureKVCacheLoaded() {
+  if (kv_cache_fp_) return;
+
+  const char* env_path = std::getenv("KIWIPEDIA_KV_CACHE_SO");
+  std::vector<const char*> candidates;
+  if (env_path && *env_path) candidates.push_back(env_path);
+  candidates.push_back("libkv_cache_kernel.so");
+  candidates.push_back("./libkv_cache_kernel.so");
+  candidates.push_back("/home/lewis56/tvm/src/runtime/contrib/kiwipedia/libkv_cache_kernel.so");
+
+  for (const char* p : candidates) {
+    kv_cache_so_handle_ = dlopen(p, RTLD_NOW | RTLD_LOCAL);
+    if (!kv_cache_so_handle_) continue;
+
+    void* sym = dlsym(kv_cache_so_handle_, "kv_cache_kernel");
+    if (!sym) {
+      dlclose(kv_cache_so_handle_);
+      kv_cache_so_handle_ = nullptr;
+      continue;
+    }
+
+    kv_cache_fp_ = reinterpret_cast<KVCacheFn>(sym);
+    break;
+  }
+
+  ICHECK(kv_cache_fp_ != nullptr)
+      << "Failed to load symbol 'kv_cache_kernel'. "
+      << "Set KIWIPEDIA_KV_CACHE_SO to libkv_cache_kernel.so. "
+      << "dlerror: " << dlerror();
 }
 
   std::vector<int64_t> GetRuntimeShape(const DLTensor* t) {
@@ -327,6 +374,29 @@ void EnsureAddLoaded() {
     //          << std::endl;
 
     add_fp_(op_data, shapeA, shapeB);
+  }
+
+  void kiwipedia_kv_cache_kernel(size_t idx) {
+    EnsureKVCacheLoaded();
+
+    auto inputs = nodes_[idx].GetInputs();
+
+    ICHECK_GE(inputs.size(), 2)
+        << "kiwipedia.kv_cache_kernel expects 2 inputs: old_cache, src";
+
+    uint32_t cache_eid = EntryID(inputs[0]);
+    uint32_t src_eid = EntryID(inputs[1]);
+
+    JSONGraphNodeEntry out_entry;
+    out_entry.id_ = static_cast<uint32_t>(idx);
+    out_entry.index_ = 0;
+    out_entry.version_ = 0;
+    uint32_t out_eid = EntryID(out_entry);
+
+    kv_cache_fp_(data_entry_,
+                static_cast<int64_t>(cache_eid),
+                static_cast<int64_t>(src_eid),
+                static_cast<int64_t>(out_eid));
   }
   //void kiwipedia_matmul(size_t idx){
     // open shared library
