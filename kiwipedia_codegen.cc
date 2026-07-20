@@ -119,6 +119,11 @@
       // Capture the args to the "Composite" function as inputs for this node.
       std::vector<JSONGraphNodeEntry> inputs;
       for (const auto& arg : call_node->args) {
+        // Dynamic shape function may pass R.Shape(...) / tir_vars.
+        // These are not runtime tensor inputs for kiwipedia kernels.
+        if (arg.as<ShapeExprNode>()) {
+          continue;
+        }
         auto res = VisitExpr(arg);
         inputs.insert(inputs.end(), res.begin(), res.end());
       }

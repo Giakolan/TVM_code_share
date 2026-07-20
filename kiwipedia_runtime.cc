@@ -174,6 +174,9 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
     
     for(size_t nid=0; nid<nodes_.size(); nid++){
       if(nodes_[nid].GetOpType() == "kernel"){
+        //std::cout << "[DEBUG][runtime] node=" << nid
+        //      << " op_name=" << nodes_[nid].GetOpName()
+        //      << std::endl;
         if(nodes_[nid].GetOpName() == "kiwipedia.matmul")
           kiwipedia_matmul(nid);
 	      else if (nodes_[nid].GetOpName() == "kiwipedia.add")

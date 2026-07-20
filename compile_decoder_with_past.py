@@ -54,20 +54,27 @@ def compile_model(onnx_path, target="llvm"):
     bind_constants: 綁定常數，如果前面 from_onnx 的 keep_params_in_input=False(預設) 這裡要設成 bind_constants=False
                          如果前面 from_onnx 的 keep_params_in_input=True		這裡要設成 bind_constants=True(預設)
     '''
+    print("===== After LegalizeOps =====")
+    mod.show()
+
     mod = relax.transform.FuseOpsByPattern(patterns, bind_constants=False, annotate_codegen=True)(mod)
     #mod = relax.transform.FuseOpsByPattern(patterns, bind_constants=False)(mod)
     #mod = relax.transform.FuseOpsByPattern(patterns)(mod)
     #mod.show()
-
-    mod = relax.transform.LambdaLift()(mod)
-
+    print("===== After FuseOpsByPattern =====")
+    mod.show()
+    #mod = relax.transform.LambdaLift()(mod)
+    #print("===== After LambdaLift =====")
+    #mod.show()
     #mod = relax.transform.MergeCompositeFunctions()(mod)
     #mod.show()
 
 
 
-    #mod = relax.transform.RunCodegen()(mod)
+    mod = relax.transform.RunCodegen()(mod)
     #mod.show()
+    print("===== After RunCodegen =====")
+    mod.show()
 
     # 3. Apply mandatory passes
     seq = tvm.ir.transform.Sequential([

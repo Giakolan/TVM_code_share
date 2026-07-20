@@ -1,5 +1,5 @@
 #include <dlpack/dlpack.h>
-
+#include <iostream>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -30,6 +30,11 @@ void CheckSameDTypeSize(const DLTensor* a, const DLTensor* b, const DLTensor* c)
 
 extern "C" void kv_cache_kernel(std::vector<const DLTensor*>& data_entry, int64_t cache_eid,
                                 int64_t src_eid, int64_t out_eid) {
+  static bool printed = false;
+  if (!printed) {
+    std::cout << "[DEBUG][KV_CACHE] kv_cache_kernel.cc is called" << std::endl;
+    printed = true;
+  }
   const DLTensor* old_cache = data_entry.at(static_cast<size_t>(cache_eid));
   const DLTensor* src = data_entry.at(static_cast<size_t>(src_eid));
   const DLTensor* out = data_entry.at(static_cast<size_t>(out_eid));

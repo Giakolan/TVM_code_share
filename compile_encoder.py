@@ -36,7 +36,7 @@ def compile_model(onnx_path, target="llvm"):
 	mod = relax.transform.FuseOpsByPattern(patterns, bind_constants=False, annotate_codegen=True)(mod)
 	#mod = relax.transform.FuseOpsByPattern(patterns, bind_constants=False)(mod)
 	#mod = relax.transform.FuseOpsByPattern(patterns)(mod)
-	#mod.show()
+	mod.show()
 
 
 
@@ -46,7 +46,7 @@ def compile_model(onnx_path, target="llvm"):
 
 
 	mod = relax.transform.RunCodegen()(mod)
-	#mod.show()
+	mod.show()
 
 	# 3. Apply mandatory passes
 	seq = tvm.ir.transform.Sequential([
@@ -63,7 +63,7 @@ def compile_model(onnx_path, target="llvm"):
 	
 	# 5. Save
 	output_path = onnx_path.replace(".onnx", ".so")
-	ex.export_library(output_path)
+	#ex.export_library(output_path)
 	return output_path
 
 # Compile both encoder and decoder
