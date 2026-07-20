@@ -114,7 +114,7 @@ void matmul(std::vector<const DLTensor*>& data_entry_,
 
     const DLTensor* A = data_entry_[0];
     const DLTensor* B = data_entry_[1];
-    const DLTensor* C = data_entry_[2];
+    const DLTensor* C = data_entry_[2]; 
 
     //std::cout << "\n========== [DEBUG][matmul call "
     //          << call_id << "] ==========" << std::endl;
