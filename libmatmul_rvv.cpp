@@ -113,6 +113,69 @@ static inline void microkernel_rvv_unit_stride(
     }
 }
 
+
+// ==================== M=1 SPECIALIZED RVV KERNEL ====================
+/**
+ * //add
+ * Compute C[1][N] = A[1][K] * B[K][N].
+ *
+ * This specialized path avoids:
+ *   1. B packing
+ *   2. MC/KC/NC blocking overhead
+ *   3. Repeated C load/store across K tiles
+ *
+ * B is row-major, so B[k][col:col+vl] is contiguous and can be
+ * loaded with unit-stride RVV instructions directly.
+ */
+static inline void matmul_m1_rvv(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    //static bool printed = false;//add
+
+    //if (!printed) {//add
+    //    std::cerr << "[INFO] Using M=1 specialized RVV kernel\n";//add
+    //    printed = true;//add
+    //}//add
+
+    int col = 0;
+
+    while (col < N) {
+        const size_t vl =
+            __riscv_vsetvl_e32m1(static_cast<size_t>(N - col));
+
+        // C starts from zero because this function computes the full K range.
+        vfloat32m1_t vacc =
+            __riscv_vfmv_v_f_f32m1(0.0f, vl);
+
+        for (int k = 0; k < K; ++k) {
+            const float a_scalar = A[k];
+
+            // B is [K][N] row-major.
+            const float* B_vec =
+                B + static_cast<size_t>(k) * N + col;
+
+            const vfloat32m1_t bv =
+                __riscv_vle32_v_f32m1(B_vec, vl);
+
+            vacc = __riscv_vfmacc_vf_f32m1(
+                vacc,
+                a_scalar,
+                bv,
+                vl
+            );
+        }
+
+        __riscv_vse32_v_f32m1(C + col, vacc, vl);
+
+        col += static_cast<int>(vl);
+    }
+}
+
+
 // ==================== 3. BLOCKED MATMUL (3-Loop Tiling) ====================
 /**
  * Blocked matrix multiplication: C = A * B
@@ -128,6 +191,13 @@ void do_block_matmul(
     int m, 
     int o
 ) {
+    // Specialized path:
+    // A[1, m] x B[m, o] -> C[1, o]
+    if (n == 1) {//add
+        matmul_m1_rvv(A, B, C, m, o);//add
+        return;//add
+    }//add
+
     // Aligned packing buffer (static to avoid repeated allocation)
     static float Bpack[KC * NC] __attribute__((aligned(64)));
     
@@ -219,6 +289,13 @@ void matmul(
     std::vector<int64_t>& shapeA,
     std::vector<int64_t>& shapeB
 ) {
+    //static bool printed = false;
+
+    //if (!printed) {
+    //   std::cerr << "[INFO] Using libmatmul_rvv.cpp\n";
+    //    printed = true;
+    //}
+
     const DLTensor* A = data_entry_[0];
     const DLTensor* B = data_entry_[1];
     const DLTensor* C = data_entry_[2];
