@@ -449,7 +449,7 @@ static inline void matmul_m8_rvv(
 }
 
 
-static inline void matmul_small_m_rvv(
+static inline void matmul_rows_by_8_rvv(
     const float* A,
     const float* B,
     float* C,
@@ -459,14 +459,8 @@ static inline void matmul_small_m_rvv(
 ) {
     int row = 0;
 
-    /*
-     * 用 8、4、2、1 依序拆解 M。
-     *
-     * 每完成一個 block：
-     * A 往下移 block_rows * K
-     * C 往下移 block_rows * N
-     */
-    if (M & 8) {
+
+    while (row + 8 <= M) {
         matmul_m8_rvv(
             A + static_cast<size_t>(row) * K,
             B,
@@ -474,11 +468,12 @@ static inline void matmul_small_m_rvv(
             K,
             N
         );
-
         row += 8;
     }
 
-    if (M & 4) {
+    const int remain = M - row;
+
+    if (remain & 4) {
         matmul_m4_rvv(
             A + static_cast<size_t>(row) * K,
             B,
@@ -486,11 +481,10 @@ static inline void matmul_small_m_rvv(
             K,
             N
         );
-
         row += 4;
     }
 
-    if (M & 2) {
+    if (remain & 2) {
         matmul_m2_rvv(
             A + static_cast<size_t>(row) * K,
             B,
@@ -498,11 +492,10 @@ static inline void matmul_small_m_rvv(
             K,
             N
         );
-
         row += 2;
     }
 
-    if (M & 1) {
+    if (remain & 1) {
         matmul_m1_rvv(
             A + static_cast<size_t>(row) * K,
             B,
@@ -510,12 +503,52 @@ static inline void matmul_small_m_rvv(
             K,
             N
         );
-
-        row += 1;
     }
+}
+/*
+static inline int SpecializedScanCount(int M) {
+    int count = M / 8;
+    const int remain = M % 8;
+
+    if (remain & 4) {
+        ++count;
+    }
+
+    if (remain & 2) {
+        ++count;
+    }
+
+    if (remain & 1) {
+        ++count;
+    }
+
+    return count;
+}
+
+static inline bool ShouldUseRowDecomposition(int M) {
+    if (M <= 15) {
+        return true;
+    }
+
+    if (M > 64) {
+        return false;
+    }
+
+    const int scan_count = SpecializedScanCount(M);
+
+    const double rows_per_scan =
+        static_cast<double>(M) /
+        static_cast<double>(scan_count);
+
+    return rows_per_scan >= 6.0;
 }
 
 
+static inline bool ShouldUseRowDecomposition(int M) {
+    //return M >= 1 && M <= 256;
+    return true;
+}
+*/
 // ==================== 3. BLOCKED MATMUL (3-Loop Tiling) ====================
 /**
  * Blocked matrix multiplication: C = A * B
@@ -523,28 +556,17 @@ static inline void matmul_small_m_rvv(
  * B: [m][o] row-major  
  * C: [n][o] row-major
  */
-void do_block_matmul(
-    const float* A, 
-    const float* B, 
+/*
+
+static void matmul_general_rvv(
+    const float* A,
+    const float* B,
     float* C,
-    int n, 
-    int m, 
+    int n,
+    int m,
     int o
 ) {
-    // Specialized path:
-    if (n >= 1 && n <= 15) {
-        matmul_small_m_rvv(
-            A,
-            B,
-            C,
-            n,  // M
-            m,  // K
-            o   // N
-        );
-        return;
-    }
-
-
+    // 原本一般 blocked matmul 的完整內容
     // Aligned packing buffer (static to avoid repeated allocation)
     static float Bpack[KC * NC] __attribute__((aligned(64)));
     
@@ -582,6 +604,27 @@ void do_block_matmul(
             }
         }
     }
+}
+*/
+
+static void do_block_matmul(
+    const float* A,
+    const float* B,
+    float* C,
+    int M,
+    int K,
+    int N
+) {
+    matmul_rows_by_8_rvv(
+        A,
+        B,
+        C,
+        M,
+        K,
+        N
+    );
+    return;
+
 }
 
 // ==================== 4. BATCH PROCESSING ====================
