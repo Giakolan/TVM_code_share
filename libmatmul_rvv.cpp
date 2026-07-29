@@ -449,6 +449,73 @@ static inline void matmul_m8_rvv(
 }
 
 
+static inline void matmul_small_m_rvv(
+    const float* A,
+    const float* B,
+    float* C,
+    int M,
+    int K,
+    int N
+) {
+    int row = 0;
+
+    /*
+     * 用 8、4、2、1 依序拆解 M。
+     *
+     * 每完成一個 block：
+     * A 往下移 block_rows * K
+     * C 往下移 block_rows * N
+     */
+    if (M & 8) {
+        matmul_m8_rvv(
+            A + static_cast<size_t>(row) * K,
+            B,
+            C + static_cast<size_t>(row) * N,
+            K,
+            N
+        );
+
+        row += 8;
+    }
+
+    if (M & 4) {
+        matmul_m4_rvv(
+            A + static_cast<size_t>(row) * K,
+            B,
+            C + static_cast<size_t>(row) * N,
+            K,
+            N
+        );
+
+        row += 4;
+    }
+
+    if (M & 2) {
+        matmul_m2_rvv(
+            A + static_cast<size_t>(row) * K,
+            B,
+            C + static_cast<size_t>(row) * N,
+            K,
+            N
+        );
+
+        row += 2;
+    }
+
+    if (M & 1) {
+        matmul_m1_rvv(
+            A + static_cast<size_t>(row) * K,
+            B,
+            C + static_cast<size_t>(row) * N,
+            K,
+            N
+        );
+
+        row += 1;
+    }
+}
+
+
 // ==================== 3. BLOCKED MATMUL (3-Loop Tiling) ====================
 /**
  * Blocked matrix multiplication: C = A * B
@@ -465,26 +532,18 @@ void do_block_matmul(
     int o
 ) {
     // Specialized path:
-    // A[1, m] x B[m, o] -> C[1, o]
-    if (n == 1) {//add
-        matmul_m1_rvv(A, B, C, m, o);//add
-        return;//add
-    }//add
-
-    if (n == 2) {
-        matmul_m2_rvv(A, B, C, m, o);
+    if (n >= 1 && n <= 15) {
+        matmul_small_m_rvv(
+            A,
+            B,
+            C,
+            n,  // M
+            m,  // K
+            o   // N
+        );
         return;
     }
 
-    if (n == 4) {
-        matmul_m4_rvv(A, B, C, m, o);
-        return;
-    }
-
-    if (n == 8) {
-        matmul_m8_rvv(A, B, C, m, o);
-        return;
-    }
 
     // Aligned packing buffer (static to avoid repeated allocation)
     static float Bpack[KC * NC] __attribute__((aligned(64)));
