@@ -134,13 +134,6 @@ static inline void matmul_m1_rvv(
     int K,
     int N
 ) {
-    //static bool printed = false;//add
-
-    //if (!printed) {//add
-    //    std::cerr << "[INFO] Using M=1 specialized RVV kernel\n";//add
-    //    printed = true;//add
-    //}//add
-
     int col = 0;
 
     while (col < N) {
@@ -316,6 +309,411 @@ static inline void matmul_m4_rvv(
     }
 }
 
+__attribute__((noinline))
+static void matmul_m4_rvv_m2(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    const float* A0 = A;
+    const float* A1 = A + K;
+    const float* A2 = A + 2 * K;
+    const float* A3 = A + 3 * K;
+
+    float* C0 = C;
+    float* C1 = C + N;
+    float* C2 = C + 2 * N;
+    float* C3 = C + 3 * N;
+
+    int col = 0;
+
+    while (col < N) {
+        const size_t vl =
+            __riscv_vsetvl_e32m2(
+                static_cast<size_t>(N - col)
+            );
+
+        vfloat32m2_t acc0 =
+            __riscv_vfmv_v_f_f32m2(0.0f, vl);
+        vfloat32m2_t acc1 =
+            __riscv_vfmv_v_f_f32m2(0.0f, vl);
+        vfloat32m2_t acc2 =
+            __riscv_vfmv_v_f_f32m2(0.0f, vl);
+        vfloat32m2_t acc3 =
+            __riscv_vfmv_v_f_f32m2(0.0f, vl);
+
+        for (int k = 0; k < K; ++k) {
+            const float* B_vec =
+                B + static_cast<size_t>(k) * N + col;
+
+            const vfloat32m2_t bv =
+                __riscv_vle32_v_f32m2(
+                    B_vec,
+                    vl
+                );
+
+            acc0 = __riscv_vfmacc_vf_f32m2(
+                acc0, A0[k], bv, vl
+            );
+
+            acc1 = __riscv_vfmacc_vf_f32m2(
+                acc1, A1[k], bv, vl
+            );
+
+            acc2 = __riscv_vfmacc_vf_f32m2(
+                acc2, A2[k], bv, vl
+            );
+
+            acc3 = __riscv_vfmacc_vf_f32m2(
+                acc3, A3[k], bv, vl
+            );
+        }
+
+        __riscv_vse32_v_f32m2(
+            C0 + col, acc0, vl
+        );
+        __riscv_vse32_v_f32m2(
+            C1 + col, acc1, vl
+        );
+        __riscv_vse32_v_f32m2(
+            C2 + col, acc2, vl
+        );
+        __riscv_vse32_v_f32m2(
+            C3 + col, acc3, vl
+        );
+
+        col += static_cast<int>(vl);
+    }
+}
+
+__attribute__((noinline))
+static void matmul_m4_rvv_m4(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    const float* A0 = A;
+    const float* A1 = A + K;
+    const float* A2 = A + 2 * K;
+    const float* A3 = A + 3 * K;
+
+    float* C0 = C;
+    float* C1 = C + N;
+    float* C2 = C + 2 * N;
+    float* C3 = C + 3 * N;
+
+    int col = 0;
+
+    while (col < N) {
+        const size_t vl =
+            __riscv_vsetvl_e32m4(
+                static_cast<size_t>(N - col)
+            );
+
+        vfloat32m4_t acc0 =
+            __riscv_vfmv_v_f_f32m4(0.0f, vl);
+        vfloat32m4_t acc1 =
+            __riscv_vfmv_v_f_f32m4(0.0f, vl);
+        vfloat32m4_t acc2 =
+            __riscv_vfmv_v_f_f32m4(0.0f, vl);
+        vfloat32m4_t acc3 =
+            __riscv_vfmv_v_f_f32m4(0.0f, vl);
+
+        for (int k = 0; k < K; ++k) {
+            const float* B_vec =
+                B + static_cast<size_t>(k) * N + col;
+
+            const vfloat32m4_t bv =
+                __riscv_vle32_v_f32m4(
+                    B_vec,
+                    vl
+                );
+
+            acc0 = __riscv_vfmacc_vf_f32m4(
+                acc0, A0[k], bv, vl
+            );
+
+            acc1 = __riscv_vfmacc_vf_f32m4(
+                acc1, A1[k], bv, vl
+            );
+
+            acc2 = __riscv_vfmacc_vf_f32m4(
+                acc2, A2[k], bv, vl
+            );
+
+            acc3 = __riscv_vfmacc_vf_f32m4(
+                acc3, A3[k], bv, vl
+            );
+        }
+
+        __riscv_vse32_v_f32m4(
+            C0 + col, acc0, vl
+        );
+        __riscv_vse32_v_f32m4(
+            C1 + col, acc1, vl
+        );
+        __riscv_vse32_v_f32m4(
+            C2 + col, acc2, vl
+        );
+        __riscv_vse32_v_f32m4(
+            C3 + col, acc3, vl
+        );
+
+        col += static_cast<int>(vl);
+    }
+}
+
+
+__attribute__((noinline))
+static void matmul_m4_rvv_m4_body(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N,
+    int main_cols
+) {
+    const float* A0 = A;
+    const float* A1 = A + K;
+    const float* A2 = A + 2 * K;
+    const float* A3 = A + 3 * K;
+
+    float* C0 = C;
+    float* C1 = C + N;
+    float* C2 = C + 2 * N;
+    float* C3 = C + 3 * N;
+
+    int col = 0;
+
+    while (col < main_cols) {
+        const size_t vl =
+            __riscv_vsetvl_e32m4(
+                static_cast<size_t>(main_cols - col)
+            );
+
+        vfloat32m4_t acc0 =
+            __riscv_vfmv_v_f_f32m4(0.0f, vl);
+        vfloat32m4_t acc1 =
+            __riscv_vfmv_v_f_f32m4(0.0f, vl);
+        vfloat32m4_t acc2 =
+            __riscv_vfmv_v_f_f32m4(0.0f, vl);
+        vfloat32m4_t acc3 =
+            __riscv_vfmv_v_f_f32m4(0.0f, vl);
+
+        for (int k = 0; k < K; ++k) {
+            const float* B_vec =
+                B + static_cast<size_t>(k) * N + col;
+
+            const vfloat32m4_t bv =
+                __riscv_vle32_v_f32m4(
+                    B_vec,
+                    vl
+                );
+
+            acc0 =
+                __riscv_vfmacc_vf_f32m4(
+                    acc0,
+                    A0[k],
+                    bv,
+                    vl
+                );
+
+            acc1 =
+                __riscv_vfmacc_vf_f32m4(
+                    acc1,
+                    A1[k],
+                    bv,
+                    vl
+                );
+
+            acc2 =
+                __riscv_vfmacc_vf_f32m4(
+                    acc2,
+                    A2[k],
+                    bv,
+                    vl
+                );
+
+            acc3 =
+                __riscv_vfmacc_vf_f32m4(
+                    acc3,
+                    A3[k],
+                    bv,
+                    vl
+                );
+        }
+
+        __riscv_vse32_v_f32m4(
+            C0 + col,
+            acc0,
+            vl
+        );
+
+        __riscv_vse32_v_f32m4(
+            C1 + col,
+            acc1,
+            vl
+        );
+
+        __riscv_vse32_v_f32m4(
+            C2 + col,
+            acc2,
+            vl
+        );
+
+        __riscv_vse32_v_f32m4(
+            C3 + col,
+            acc3,
+            vl
+        );
+
+        col += static_cast<int>(vl);
+    }
+}
+
+__attribute__((noinline))
+static void matmul_m4_rvv_m1_tail(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N,
+    int start_col
+) {
+    const float* A0 = A;
+    const float* A1 = A + K;
+    const float* A2 = A + 2 * K;
+    const float* A3 = A + 3 * K;
+
+    float* C0 = C;
+    float* C1 = C + N;
+    float* C2 = C + 2 * N;
+    float* C3 = C + 3 * N;
+
+    int col = start_col;
+
+    while (col < N) {
+        const size_t vl =
+            __riscv_vsetvl_e32m1(
+                static_cast<size_t>(N - col)
+            );
+
+        vfloat32m1_t acc0 =
+            __riscv_vfmv_v_f_f32m1(0.0f, vl);
+        vfloat32m1_t acc1 =
+            __riscv_vfmv_v_f_f32m1(0.0f, vl);
+        vfloat32m1_t acc2 =
+            __riscv_vfmv_v_f_f32m1(0.0f, vl);
+        vfloat32m1_t acc3 =
+            __riscv_vfmv_v_f_f32m1(0.0f, vl);
+
+        for (int k = 0; k < K; ++k) {
+            const float* B_vec =
+                B + static_cast<size_t>(k) * N + col;
+
+            const vfloat32m1_t bv =
+                __riscv_vle32_v_f32m1(
+                    B_vec,
+                    vl
+                );
+
+            acc0 =
+                __riscv_vfmacc_vf_f32m1(
+                    acc0,
+                    A0[k],
+                    bv,
+                    vl
+                );
+
+            acc1 =
+                __riscv_vfmacc_vf_f32m1(
+                    acc1,
+                    A1[k],
+                    bv,
+                    vl
+                );
+
+            acc2 =
+                __riscv_vfmacc_vf_f32m1(
+                    acc2,
+                    A2[k],
+                    bv,
+                    vl
+                );
+
+            acc3 =
+                __riscv_vfmacc_vf_f32m1(
+                    acc3,
+                    A3[k],
+                    bv,
+                    vl
+                );
+        }
+
+        __riscv_vse32_v_f32m1(
+            C0 + col,
+            acc0,
+            vl
+        );
+
+        __riscv_vse32_v_f32m1(
+            C1 + col,
+            acc1,
+            vl
+        );
+
+        __riscv_vse32_v_f32m1(
+            C2 + col,
+            acc2,
+            vl
+        );
+
+        __riscv_vse32_v_f32m1(
+            C3 + col,
+            acc3,
+            vl
+        );
+
+        col += static_cast<int>(vl);
+    }
+}
+
+static void matmul_m4_rvv_m4_hybrid(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    const int main_cols =
+        N - (N % 16);
+
+    if (main_cols > 0) {
+        matmul_m4_rvv_m4_body(
+            A,
+            B,
+            C,
+            K,
+            N,
+            main_cols
+        );
+    }
+
+    if (main_cols < N) {
+        matmul_m4_rvv_m1_tail(
+            A,
+            B,
+            C,
+            K,
+            N,
+            main_cols
+        );
+    }
+}
 
 // ==================== M=8 SPECIALIZED RVV KERNEL ====================
 __attribute__((noinline))
@@ -827,7 +1225,7 @@ static inline void matmul_rows_by_8_rvv(
     const int remain = M - row;
 
     if (remain & 4) {
-        matmul_m4_rvv(
+        matmul_m4_rvv_m4_hybrid(
             A + static_cast<size_t>(row) * K,
             B,
             C + static_cast<size_t>(row) * N,
@@ -858,107 +1256,7 @@ static inline void matmul_rows_by_8_rvv(
         );
     }
 }
-/*
-static inline int SpecializedScanCount(int M) {
-    int count = M / 8;
-    const int remain = M % 8;
 
-    if (remain & 4) {
-        ++count;
-    }
-
-    if (remain & 2) {
-        ++count;
-    }
-
-    if (remain & 1) {
-        ++count;
-    }
-
-    return count;
-}
-
-static inline bool ShouldUseRowDecomposition(int M) {
-    if (M <= 15) {
-        return true;
-    }
-
-    if (M > 64) {
-        return false;
-    }
-
-    const int scan_count = SpecializedScanCount(M);
-
-    const double rows_per_scan =
-        static_cast<double>(M) /
-        static_cast<double>(scan_count);
-
-    return rows_per_scan >= 6.0;
-}
-
-
-static inline bool ShouldUseRowDecomposition(int M) {
-    //return M >= 1 && M <= 256;
-    return true;
-}
-*/
-// ==================== 3. BLOCKED MATMUL (3-Loop Tiling) ====================
-/**
- * Blocked matrix multiplication: C = A * B
- * A: [n][m] row-major
- * B: [m][o] row-major  
- * C: [n][o] row-major
- */
-/*
-
-static void matmul_general_rvv(
-    const float* A,
-    const float* B,
-    float* C,
-    int n,
-    int m,
-    int o
-) {
-    // 原本一般 blocked matmul 的完整內容
-    // Aligned packing buffer (static to avoid repeated allocation)
-    static float Bpack[KC * NC] __attribute__((aligned(64)));
-    
-    // Loop J: Tile columns of B (and C)
-    for (int jc = 0; jc < o; jc += NC) {
-        int nc = (jc + NC <= o) ? NC : (o - jc);
-        
-        // Loop I: Tile rows of A (and C)
-        for (int ic = 0; ic < n; ic += MC) {
-            int mc = (ic + MC <= n) ? MC : (n - ic);
-            
-            // Initialize C tile to zero (for accumulation across K-tiles)
-            for (int i = 0; i < mc; ++i) {
-                float* C_row = C + (size_t)(ic + i) * (size_t)o + (size_t)jc;
-                memset(C_row, 0, (size_t)nc * sizeof(float));
-            }
-            
-            // Loop P: Tile inner dimension K (and accumulate into C)
-            for (int pc = 0; pc < m; pc += KC) {
-                int kc = (pc + KC <= m) ? KC : (m - pc);
-                
-                // Pack B tile: [kc][nc] contiguous
-                pack_B_tile(B, o, pc, kc, jc, nc, Bpack);
-                
-                // Compute: C[ic:ic+mc][jc:jc+nc] += A[ic:ic+mc][pc:pc+kc] * Bpack[kc][nc]
-                const float* A_tile = A + (size_t)ic * (size_t)m + (size_t)pc;
-                float* C_tile = C + (size_t)ic * (size_t)o + (size_t)jc;
-                
-                microkernel_rvv_unit_stride(
-                    A_tile, m,      // A tile and its leading dimension
-                    Bpack,          // Packed B
-                    C_tile, o,      // C tile and its leading dimension
-                    mc, kc, nc      // Tile dimensions
-                );
-            }
-        }
-    }
-}
-*/
 
 static void do_block_matmul(
     const float* A,
@@ -1000,24 +1298,7 @@ void matmul_bxb(
     }
 }
 
-// Batch x Single: All batches share the same B
-/*
-void matmul_bxs(
-    std::vector<const DLTensor*>& data_entry_,
-    int n, int m, int o, int batch
-) {
-    const float* A = static_cast<const float*>(data_entry_[0]->data);
-    const float* B = static_cast<const float*>(data_entry_[1]->data);
-    float* C = static_cast<float*>(data_entry_[2]->data);
 
-    for (int b = 0; b < batch; ++b) {
-        const float* A_batch = A + (size_t)b * (size_t)n * (size_t)m;
-        float* C_batch = C + (size_t)b * (size_t)n * (size_t)o;
-        
-        do_block_matmul(A_batch, B, C_batch, n, m, o);
-    }
-}
-*/
 void matmul_bxs(
     std::vector<const DLTensor*>& data_entry_,
     int n,
@@ -1061,12 +1342,6 @@ void matmul(
     std::vector<int64_t>& shapeA,
     std::vector<int64_t>& shapeB
 ) {
-    //static bool printed = false;
-
-    //if (!printed) {
-    //   std::cerr << "[INFO] Using libmatmul_rvv.cpp\n";
-    //    printed = true;
-    //}
 
     const DLTensor* A = data_entry_[0];
     const DLTensor* B = data_entry_[1];
@@ -1182,6 +1457,71 @@ extern "C" void matmul_m8_hybrid_test(
     int N
 ) {
     matmul_m8_rvv_m2_hybrid(
+        A,
+        B,
+        C,
+        K,
+        N
+    );
+}
+
+
+extern "C" void matmul_m4_m1_test(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    matmul_m4_rvv(
+        A,
+        B,
+        C,
+        K,
+        N
+    );
+}
+
+extern "C" void matmul_m4_m2_test(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    matmul_m4_rvv_m2(
+        A,
+        B,
+        C,
+        K,
+        N
+    );
+}
+
+extern "C" void matmul_m4_m4_test(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    matmul_m4_rvv_m4(
+        A,
+        B,
+        C,
+        K,
+        N
+    );
+}
+
+extern "C" void matmul_m4_hybrid_test(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    matmul_m4_rvv_m4_hybrid(
         A,
         B,
         C,
