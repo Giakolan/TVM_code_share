@@ -24,9 +24,17 @@ def compile_model(onnx_path, target="llvm"):
 
 	print("===== After from_onnx =====")
 	mod.show()
+	lhs = wildcard()
+	rhs = wildcard()
+	matmul_pat = is_op("relax.matmul")(lhs, rhs)
 
-
-	patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
+	patterns = [
+		relax.transform.FusionPattern(
+			name="kiwipedia.matmul",
+			pattern=matmul_pat,
+		),
+	]
+	#patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
 	#patterns = [
 	    #("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard())),
 	    #("kiwipedia.add", is_op("relax.add")(wildcard(), wildcard())),
@@ -65,12 +73,35 @@ def compile_model(onnx_path, target="llvm"):
 	#assert relax.analysis.well_formed(mod)
 	# 4. Build
 	ex = relax.build(mod, target)
-	
-	# 5. Save
-	output_path = onnx_path.replace(".onnx", ".so")
-	ex.export_library(output_path)
+
+	cross = cc.cross_compiler(
+		"/opt/riscv/bin/riscv64-unknown-linux-gnu-g++",
+		options=[
+			"-march=rv64gcv",
+			"-mabi=lp64d",
+		],
+	)
+
+	output_path = onnx_path.replace(".onnx", "_riscv.so")
+	ex.export_library(output_path, fcompile=cross)
 	return output_path
 
 # Compile both encoder and decoder
 #encoder_so = compile_model("encoder_model.onnx", target="llvm -mtriple=riscv64-unknown-linux-gnu -mattr=+m,+a,+f,+d,+c -vector-width=128")
-decoder_so = compile_model("decoder_model.onnx", target="llvm")
+riscv_target = tvm.target.Target({
+    "kind": "llvm",
+    "mtriple": "riscv64-unknown-linux-gnu",
+    "mattr": [
+        "+m",
+        "+a",
+        "+f",
+        "+d",
+        "+c",
+        "+v",
+    ],
+})
+
+decoder_so = compile_model(
+    "decoder_model.onnx",
+    target=riscv_target
+)

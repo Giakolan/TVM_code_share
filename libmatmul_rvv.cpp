@@ -2306,7 +2306,7 @@ static inline void matmul_rows_by_14_unroll4_rvv(
     }
 }
 
-
+/*
 
 struct MatmulProfile {
     long long count = 0;
@@ -2356,7 +2356,7 @@ struct MatmulProfilePrinter {
 
 static MatmulProfilePrinter g_matmul_profile_printer;
 
-
+*/
 static void matmul_m1_rvv_m8_range(
     const float* A,
     const float* B,
@@ -2892,7 +2892,7 @@ static void do_block_matmul(
     int K,
     int N
 ) {
-    if (M == 1) {
+    /*if (M == 1) {
         std::lock_guard<std::mutex> lock(seen_shapes_mutex);
 
         auto key = std::make_tuple(M, K, N);
@@ -2904,8 +2904,8 @@ static void do_block_matmul(
                       << " N=" << N
                       << std::endl;
         }
-    }
-    auto start = std::chrono::steady_clock::now();
+    }*/
+    //auto start = std::chrono::steady_clock::now();
 
     const bool use_m14_u4 =
         M == 1500 &&
@@ -2973,7 +2973,7 @@ static void do_block_matmul(
         );
     }
 }
-    auto end = std::chrono::steady_clock::now();
+    /*auto end = std::chrono::steady_clock::now();
 
     double ms =
         std::chrono::duration<double, std::milli>(
@@ -2988,7 +2988,7 @@ static void do_block_matmul(
 
     profile.count += 1;
     profile.total_ms += ms;
-
+*/
 }
 
 
@@ -3121,7 +3121,7 @@ void matmul(
 
         do_block_matmul(a, b, c, n, m, o);
 
-    } else {
+    }else {
         std::cout << "[ERROR][RVV matmul] unsupported ndim. A->ndim="
                   << A->ndim << " B->ndim=" << B->ndim
                   << " C->ndim=" << C->ndim << std::endl;

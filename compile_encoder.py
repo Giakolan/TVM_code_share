@@ -21,10 +21,67 @@ def compile_model(onnx_path, target="llvm"):
 
 	print("===== After from_onnx =====")
 	mod.show()
+	conv_data = wildcard()
+	conv_weight = wildcard()
+	conv_pat = is_op("relax.nn.conv1d")(conv_data, conv_weight)
+
+	def is_conv1d(ctx):
+		data = ctx.annotated_expr["data"]
+		weight = ctx.annotated_expr["weight"]
+
+		dshape = data.struct_info.shape
+		wshape = weight.struct_info.shape
+
+		if dshape is None or wshape is None:
+			return False
+
+		dvals = dshape.values
+		wvals = wshape.values
+
+		if len(dvals) != 3 or len(wvals) != 3:
+			return False
+
+		# Conv1
+		conv1 = (
+			int(dvals[1]) == 80 and
+			int(dvals[2]) == 3000 and
+			int(wvals[0]) == 384 and
+			int(wvals[1]) == 80 and
+			int(wvals[2]) == 3
+		)
+
+		# Conv2
+		conv2 = (
+			int(dvals[1]) == 384 and
+			int(dvals[2]) == 3000 and
+			int(wvals[0]) == 384 and
+			int(wvals[1]) == 384 and
+			int(wvals[2]) == 3
+		)
+
+		return conv1 or conv2
+
 
 	#patterns = [("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))]
 	patterns = [
-	    ("kiwipedia.matmul", is_op("relax.matmul")(wildcard(), wildcard()))
+		#relax.transform.FusionPattern(
+		#	name="kiwipedia.conv1d",
+		#	pattern=conv_pat,
+		#	annotation_patterns={
+		#		"data": conv_data,
+		#		"weight": conv_weight,
+		#		"conv": conv_pat,
+		#	},
+		#	check=is_conv1d,
+		#),
+
+		(
+			"kiwipedia.matmul",
+			is_op("relax.matmul")(
+				wildcard(),
+				wildcard(),
+			),
+		),
 	]
 	#patterns = [("tensorrt.add", is_op("relax.add")(wildcard(), wildcard()))]
 
@@ -56,17 +113,40 @@ def compile_model(onnx_path, target="llvm"):
 	])
 	mod = seq(mod)
 
+
+
 	# Check if output IRModule is well-formed. 
 	#assert relax.analysis.well_formed(mod)
 	# 4. Build
 	ex = relax.build(mod, target)
-	
+
+
+	cross = cc.cross_compiler(
+		"/opt/riscv/bin/riscv64-unknown-linux-gnu-g++",
+		options=[
+			"-march=rv64gcv",
+			"-mabi=lp64d",
+		],
+	)	
 	# 5. Save
-	output_path = onnx_path.replace(".onnx", ".so")
-	#ex.export_library(output_path)
+	output_path = onnx_path.replace(".onnx", "_riscv.so")
+	ex.export_library(output_path,fcompile=cross)
 	return output_path
 
+riscv_target = tvm.target.Target({
+	"kind": "llvm",
+	"mtriple": "riscv64-unknown-linux-gnu",
+	"mattr": [
+		"+m",
+		"+a",
+		"+f",
+		"+d",
+		"+c",
+		"+v",
+	],
+})
+
 # Compile both encoder and decoder
-encoder_so = compile_model("encoder_model.onnx", target="llvm")
+encoder_so = compile_model("encoder_model.onnx", target=riscv_target)
 #decoder_so = compile_model("decoder_model.onnx", target="llvm -mtriple=riscv64-unknown-linux-gnu -mattr=+m,+a,+f,+d,+c -vector-width=128")
 
