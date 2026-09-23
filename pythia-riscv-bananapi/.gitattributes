@@ -1,0 +1,2 @@
+model/pythia_70m_riscv.so filter=lfs diff=lfs merge=lfs -text
+model/*.so filter=lfs diff=lfs merge=lfs -text
