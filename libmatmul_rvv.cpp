@@ -2882,7 +2882,125 @@ static void matmul_m1500_multithread(
         th.join();
 }
 
+static void matmul_m750_multithread(
+    const float* A,
+    const float* B,
+    float* C,
+    int K,
+    int N
+) {
+    using TileKernel =
+        void (*)(const float*, const float*, float*, int, int);
 
+    TileKernel kernel = nullptr;
+    int tile = 0;
+    int preferred_threads = 1;
+
+    if (K == 384 && N == 1536) {
+        kernel = matmul_m14_shared_b_unroll4_rvv;
+        tile = 14;
+        preferred_threads = 8;
+    } else if (K == 1536 && N == 384) {
+        kernel = matmul_m10_shared_b_unroll4_rvv;
+        tile = 10;
+        preferred_threads = 4;
+    } else if (K == 1152 && N == 384) {
+        kernel = matmul_m14_shared_b_unroll4_rvv;
+        tile = 14;
+        preferred_threads = 8;
+    } else if (K == 384 && N == 384) {
+        kernel = matmul_m14_shared_b_unroll4_rvv;
+        tile = 14;
+        preferred_threads = 4;
+    } else if (K == 64 && N == 750) {
+        kernel = matmul_m14_shared_b_unroll2_rvv;
+        tile = 14;
+        preferred_threads = 8;
+    } else if (K == 750 && N == 64) {
+        kernel = matmul_m14_shared_b_unroll2_rvv;
+        tile = 14;
+        preferred_threads = 4;
+    } else {
+        // 未測過的 M=750 形狀仍使用原本的 generic kernel。
+        matmul_rows_by_8_rvv(A, B, C, 750, K, N);
+        return;
+    }
+
+    int requested_threads = preferred_threads;
+
+    if (const char* setting =
+            std::getenv("KIWIPEDIA_MATMUL_THREADS")) {
+        const int parsed = std::atoi(setting);
+        if (parsed > 0) {
+            requested_threads =
+                std::min(parsed, preferred_threads);
+        }
+    }
+
+    const int full_tiles = 750 / tile;
+    const int tail = 750 % tile;
+
+    const int thread_count =
+        std::max(1, std::min(requested_threads, full_tiles));
+
+    const int quotient = full_tiles / thread_count;
+    const int remainder = full_tiles % thread_count;
+
+    auto work = [&](int first_tile, int count, bool last) {
+        int row = first_tile * tile;
+
+        for (int i = 0; i < count; ++i, row += tile) {
+            kernel(
+                A + static_cast<size_t>(row) * K,
+                B,
+                C + static_cast<size_t>(row) * N,
+                K,
+                N
+            );
+        }
+
+        // 例如 750 % 14 = 8，剩餘列要另外計算。
+        if (last && tail > 0) {
+            matmul_rows_by_8_rvv(
+                A + static_cast<size_t>(row) * K,
+                B,
+                C + static_cast<size_t>(row) * N,
+                tail,
+                K,
+                N
+            );
+        }
+    };
+
+    if (thread_count == 1) {
+        work(0, full_tiles, true);
+        return;
+    }
+
+    std::vector<std::thread> workers;
+    workers.reserve(thread_count);
+
+    int first_tile = 0;
+
+    for (int t = 0; t < thread_count; ++t) {
+        const int count =
+            quotient + (t < remainder ? 1 : 0);
+
+        const int start = first_tile;
+        first_tile += count;
+
+        workers.emplace_back(
+            work,
+            start,
+            count,
+            t == thread_count - 1
+        );
+    }
+
+    for (auto& worker : workers) {
+        worker.join();
+    }
+}
 
 static void do_block_matmul(
     const float* A,
@@ -2892,19 +3010,17 @@ static void do_block_matmul(
     int K,
     int N
 ) {
-    /*if (M == 1) {
-        std::lock_guard<std::mutex> lock(seen_shapes_mutex);
+/*
+    std::lock_guard<std::mutex> lock(seen_shapes_mutex);
+    auto key = std::make_tuple(M, K, N);
 
-        auto key = std::make_tuple(M, K, N);
-
-        if (seen_shapes.insert(key).second) {
-            std::cerr << "[MATMUL SHAPE] "
-                      << "M=" << M
-                      << " K=" << K
-                      << " N=" << N
-                      << std::endl;
-        }
-    }*/
+    if (seen_shapes.insert(key).second) {
+        std::cerr << "[MATMUL SHAPE]"
+                  << " M=" << M
+                  << " K=" << K
+                  << " N=" << N << '\n';
+    }
+*/
     //auto start = std::chrono::steady_clock::now();
 
     const bool use_m14_u4 =
@@ -2937,6 +3053,12 @@ static void do_block_matmul(
         matmul_m1_multithread(
             A, B, C,
             K, N, T
+        );
+    }
+    else if (M == 750) {
+        matmul_m750_multithread(
+            A, B, C,
+            K, N
         );
     }
     else if (M == 1500) {
