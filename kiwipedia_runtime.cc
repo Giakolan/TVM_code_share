@@ -43,6 +43,7 @@
 #include<stdlib.h>
 #include<iostream>
 // #include "matmul.h"
+#include <chrono>
 
 namespace tvm {
 namespace runtime {
@@ -83,14 +84,31 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
     SetupConstants(consts);
   }
 
+
   ~kiwipedia_Runtime() {
-    if (so_handle_ != nullptr) {
+    if (so_handle_) {
       dlclose(so_handle_);
       so_handle_ = nullptr;
     }
-    if (kv_cache_so_handle_ != nullptr) {
+
+    if (attention_so_handle_) {
+      dlclose(attention_so_handle_);
+      attention_so_handle_ = nullptr;
+    }
+
+    if (kv_cache_so_handle_) {
       dlclose(kv_cache_so_handle_);
       kv_cache_so_handle_ = nullptr;
+    }
+
+    if (conv1d_so_handle_) {
+      dlclose(conv1d_so_handle_);
+      conv1d_so_handle_ = nullptr;
+    }
+
+    if (ops_so_handle_) {
+      dlclose(ops_so_handle_);
+      ops_so_handle_ = nullptr;
     }
   }
 
@@ -179,10 +197,20 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
         //      << std::endl;
         if(nodes_[nid].GetOpName() == "kiwipedia.matmul")
           kiwipedia_matmul(nid);
-	      else if (nodes_[nid].GetOpName() == "kiwipedia.add")
-	        kiwipedia_add(nid);
-        else if (nodes_[nid].GetOpName() == "kiwipedia.kv_cache_kernel")
+        else if(nodes_[nid].GetOpName() == "kiwipedia.attention_matmul")
+          kiwipedia_attention_matmul(nid);
+        else if(nodes_[nid].GetOpName() == "kiwipedia.add")
+          kiwipedia_add(nid);
+        else if(nodes_[nid].GetOpName() == "kiwipedia.kv_cache_kernel")
           kiwipedia_kv_cache_kernel(nid);
+        else if(nodes_[nid].GetOpName() == "kiwipedia.conv1d")
+          kiwipedia_conv1d(nid);
+        else if(nodes_[nid].GetOpName() == "kiwipedia.layernorm")
+          kiwipedia_layernorm(nid);
+        else if(nodes_[nid].GetOpName() == "kiwipedia.gelu")
+          kiwipedia_gelu(nid);
+        else if(nodes_[nid].GetOpName() == "kiwipedia.encoder_softmax")
+          kiwipedia_encoder_softmax(nid);
         // 後續增加其他 OP
         else
           ICHECK(false) << "Unsupported kiwipedia kernel: " << nodes_[nid].GetOpName();
@@ -202,16 +230,52 @@ class kiwipedia_Runtime : public JSONRuntimeBase {
   using MatmulFn =
       void (*)(std::vector<const DLTensor*>&, std::vector<int64_t>&, std::vector<int64_t>&);
 
+  using Conv1DFn =
+      void (*)(std::vector<const DLTensor*>&, std::vector<int64_t>&, std::vector<int64_t>&);
+
+  using AttentionFn =
+      void (*)(std::vector<const DLTensor*>&, std::vector<int64_t>&, std::vector<int64_t>&);
+
   using KVCacheFn =
       void (*)(std::vector<const DLTensor*>&, int64_t, int64_t, int64_t);
 
+  using LayerNormFn =
+      int (*)(const float*, const float*, const float*, float*, int64_t, int64_t, float);
+
+  using GeluFn =
+      int (*)(const float*, float*, int64_t);
+
+  using SoftmaxFn =
+      int (*)(const float*, float*, int64_t, int64_t);
+
   // 一定要宣告成 class 成員
   void* so_handle_{nullptr};
+  void* attention_so_handle_{nullptr};
   void* kv_cache_so_handle_{nullptr};
+  void* conv1d_so_handle_{nullptr};
+  void* ops_so_handle_{nullptr};
+
 
   MatmulFn matmul_fp_{nullptr};
+  AttentionFn attention_fp_{nullptr};
   KVCacheFn kv_cache_fp_{nullptr};
+  Conv1DFn conv1d_fp_{nullptr};
+
+  LayerNormFn layernorm_fp_{nullptr};
+  GeluFn gelu_fp_{nullptr};
+  SoftmaxFn softmax_fp_{nullptr};
+
+  uint64_t layernorm_count_{0};
+  double layernorm_total_ms_{0.0};
+
+  uint64_t gelu_count_{0};
+  double gelu_total_ms_{0.0};
+
+  uint64_t softmax_count_{0};
+  double softmax_total_ms_{0.0};
   
+
+
   using AddFn =
     void (*)(std::vector<const DLTensor*>&,
              std::vector<int64_t>&,
@@ -261,6 +325,140 @@ void EnsureAddLoaded() {
     ICHECK(add_fp_ != nullptr)
         << "Failed to load symbol 'add' from shared library. "
         << "Please make sure libmatmul.so exports function add.";
+}
+
+  void EnsureAttentionLoaded() {
+    if (attention_fp_) return;
+
+    const char* env_path = std::getenv("KIWIPEDIA_ATTENTION_SO");
+    std::vector<const char*> candidates;
+
+    if (env_path && *env_path) candidates.push_back(env_path);
+    candidates.push_back("libattention.so");
+    candidates.push_back("./libattention.so");
+    candidates.push_back("/home/pi/libattention.so");
+
+    for (const char* path : candidates) {
+      attention_so_handle_ = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+      if (!attention_so_handle_) continue;
+
+      void* sym = dlsym(attention_so_handle_, "attention_matmul");
+      if (!sym) {
+        dlclose(attention_so_handle_);
+        attention_so_handle_ = nullptr;
+        continue;
+      }
+
+      attention_fp_ = reinterpret_cast<AttentionFn>(sym);
+      break;
+    }
+
+    ICHECK(attention_fp_ != nullptr)
+        << "Failed to load symbol 'attention_matmul'. "
+        << "Set KIWIPEDIA_ATTENTION_SO to libattention.so. "
+        << "dlerror: " << dlerror();
+  }
+
+
+
+void EnsureConv1DLoaded() {
+  if (conv1d_fp_) return;
+
+  const char* env_path = std::getenv("KIWIPEDIA_CONV1D_SO");
+  std::vector<const char*> candidates;
+
+  if (env_path && *env_path)
+    candidates.push_back(env_path);
+
+  candidates.push_back("libconv1d.so");
+  candidates.push_back("./libconv1d.so");
+  candidates.push_back("/home/pi/libconv1d.so");
+
+  for (const char* path : candidates) {
+    conv1d_so_handle_ =
+        dlopen(path, RTLD_NOW | RTLD_LOCAL);
+
+    if (!conv1d_so_handle_)
+      continue;
+
+    void* sym =
+        dlsym(conv1d_so_handle_, "conv1d");
+
+    if (!sym) {
+      dlclose(conv1d_so_handle_);
+      conv1d_so_handle_ = nullptr;
+      continue;
+    }
+
+    conv1d_fp_ =
+        reinterpret_cast<Conv1DFn>(sym);
+
+    break;
+  }
+
+  ICHECK(conv1d_fp_ != nullptr)
+      << "Failed to load symbol 'conv1d'. "
+      << "Set KIWIPEDIA_CONV1D_SO to libconv1d.so. "
+      << "dlerror: " << dlerror();
+}
+
+void EnsureOpsLoaded() {
+  if (layernorm_fp_ && gelu_fp_ && softmax_fp_)
+    return;
+
+  const char* env_path =
+      std::getenv("KIWIPEDIA_OPS_SO");
+
+  std::vector<const char*> candidates;
+
+  if (env_path && *env_path)
+    candidates.push_back(env_path);
+
+  candidates.push_back("libwhisper_ops.so");
+  candidates.push_back("./libwhisper_ops.so");
+  candidates.push_back("/home/pi/libwhisper_ops.so");
+
+  for (const char* path : candidates) {
+    ops_so_handle_ =
+        dlopen(path, RTLD_NOW | RTLD_LOCAL);
+
+    if (!ops_so_handle_)
+      continue;
+    
+    layernorm_fp_ =
+        reinterpret_cast<LayerNormFn>(
+            dlsym(ops_so_handle_,
+                  "whisper_layernorm_f32"));
+
+    gelu_fp_ =
+        reinterpret_cast<GeluFn>(
+            dlsym(ops_so_handle_,
+                  "whisper_gelu_f32"));
+
+    softmax_fp_ =
+        reinterpret_cast<SoftmaxFn>(
+            dlsym(ops_so_handle_,
+                  "whisper_softmax_f32"));
+
+    if (layernorm_fp_ &&
+        gelu_fp_ &&
+        softmax_fp_) {
+      return;
+    }
+
+    dlclose(ops_so_handle_);
+    ops_so_handle_ = nullptr;
+
+    layernorm_fp_ = nullptr;
+    gelu_fp_ = nullptr;
+    softmax_fp_ = nullptr;
+  }
+
+  ICHECK(false)
+      << "Failed to load LayerNorm/GELU/Softmax "
+      << "from libwhisper_ops.so. "
+      << "Set KIWIPEDIA_OPS_SO. "
+      << "dlerror: " << dlerror();
 }
 
 void EnsureKVCacheLoaded() {
@@ -341,6 +539,33 @@ void EnsureKVCacheLoaded() {
     matmul_fp_(op_data, shapeA, shapeB);
   }
 
+  void kiwipedia_attention_matmul(size_t idx) {
+    EnsureAttentionLoaded();
+
+    auto inputs = nodes_[idx].GetInputs();
+
+    uint32_t a_eid = EntryID(inputs[0]);
+    uint32_t b_eid = EntryID(inputs[1]);
+
+    JSONGraphNodeEntry out_entry;
+    out_entry.id_ = static_cast<uint32_t>(idx);
+    out_entry.index_ = 0;
+    out_entry.version_ = 0;
+
+    uint32_t c_eid = EntryID(out_entry);
+
+    const DLTensor* A = data_entry_[a_eid];
+    const DLTensor* B = data_entry_[b_eid];
+    const DLTensor* C = data_entry_[c_eid];
+
+    std::vector<const DLTensor*> op_data{A, B, C};
+
+    auto shapeA = GetRuntimeShape(A);
+    auto shapeB = GetRuntimeShape(B);
+
+    attention_fp_(op_data, shapeA, shapeB);
+  }
+
   void kiwipedia_add(size_t idx) {
     EnsureAddLoaded();
 
@@ -378,6 +603,275 @@ void EnsureKVCacheLoaded() {
 
     add_fp_(op_data, shapeA, shapeB);
   }
+
+
+  void kiwipedia_conv1d(size_t idx) {
+    EnsureConv1DLoaded();
+
+    auto inputs = nodes_[idx].GetInputs();
+
+    ICHECK_GE(inputs.size(), 2)
+        << "kiwipedia.conv1d expects 2 inputs";
+
+    uint32_t input_eid =
+        EntryID(inputs[0]);
+
+    uint32_t weight_eid =
+        EntryID(inputs[1]);
+
+    JSONGraphNodeEntry out_entry;
+    out_entry.id_ =
+        static_cast<uint32_t>(idx);
+    out_entry.index_ = 0;
+    out_entry.version_ = 0;
+
+    uint32_t output_eid =
+        EntryID(out_entry);
+
+    const DLTensor* input =
+        data_entry_[input_eid];
+
+    const DLTensor* weight =
+        data_entry_[weight_eid];
+
+    const DLTensor* output =
+        data_entry_[output_eid];
+
+    std::vector<const DLTensor*> op_data{
+        input,
+        weight,
+        output
+    };
+
+    std::vector<int64_t> input_shape =
+        GetRuntimeShape(input);
+
+    std::vector<int64_t> weight_shape =
+        GetRuntimeShape(weight);
+
+    conv1d_fp_(
+        op_data,
+        input_shape,
+        weight_shape);
+  }
+
+
+  void kiwipedia_layernorm(size_t idx) {
+    std::cerr << "[DBG] enter layernorm\n";
+    EnsureOpsLoaded();
+
+    auto inputs = nodes_[idx].GetInputs();
+
+    ICHECK_GE(inputs.size(), 5)
+        << "kiwipedia.layernorm expects x, power_const, epsilon, gamma, beta";
+
+    uint32_t x_eid = EntryID(inputs[0]);
+    uint32_t gamma_eid = EntryID(inputs[3]);
+    uint32_t beta_eid = EntryID(inputs[4]);
+
+    JSONGraphNodeEntry out_entry;
+    out_entry.id_ = static_cast<uint32_t>(idx);
+    out_entry.index_ = 0;
+    out_entry.version_ = 0;
+
+    uint32_t out_eid = EntryID(out_entry);
+
+    const DLTensor* X = data_entry_[x_eid];
+    const DLTensor* Gamma = data_entry_[gamma_eid];
+    const DLTensor* Beta = data_entry_[beta_eid];
+    const DLTensor* Y = data_entry_[out_eid];
+
+    ICHECK_GT(X->ndim, 0);
+
+    int64_t hidden =
+        X->shape[X->ndim - 1];
+
+    int64_t total = 1;
+    for (int i = 0; i < X->ndim; ++i)
+      total *= X->shape[i];
+
+    int64_t rows = total / hidden;
+
+    const float* x =
+        static_cast<const float*>(X->data);
+
+    const float* gamma =
+        static_cast<const float*>(Gamma->data);
+
+    const float* beta =
+        static_cast<const float*>(Beta->data);
+
+    float* y =
+        static_cast<float*>(Y->data);
+
+    constexpr float epsilon = 1e-5f;
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    std::cerr << "[DBG] layernorm before kernel\n";
+    int ret = layernorm_fp_(x, gamma, beta, y, rows, hidden, epsilon);
+    std::cerr << "[DBG] layernorm after kernel\n";
+    
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    double ms =
+        std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    layernorm_total_ms_ += ms;
+    layernorm_count_++;
+
+    if (layernorm_count_ == 9) {
+      std::cerr
+          << "[NEW OP PROFILE] LayerNorm count=" << layernorm_count_
+          << " total_ms=" << layernorm_total_ms_
+          << " avg_ms=" << layernorm_total_ms_ / layernorm_count_
+          << "\n";
+    }
+
+    ICHECK_EQ(ret, 0)
+        << "whisper_layernorm_f32 failed";
+  }
+
+
+  void kiwipedia_gelu(size_t idx) {
+    std::cerr << "[DBG] enter gelu\n";
+    EnsureOpsLoaded();
+
+    auto inputs = nodes_[idx].GetInputs();
+
+    ICHECK_GE(inputs.size(), 1)
+        << "kiwipedia.gelu expects 1 input";
+
+    uint32_t x_eid =
+        EntryID(inputs[0]);
+
+    JSONGraphNodeEntry out_entry;
+    out_entry.id_ =
+        static_cast<uint32_t>(idx);
+    out_entry.index_ = 0;
+    out_entry.version_ = 0;
+
+    uint32_t out_eid =
+        EntryID(out_entry);
+
+    const DLTensor* X =
+        data_entry_[x_eid];
+
+    const DLTensor* Y =
+        data_entry_[out_eid];
+
+    int64_t count = 1;
+
+    for (int i = 0; i < X->ndim; ++i)
+      count *= X->shape[i];
+
+    const float* x =
+        static_cast<const float*>(X->data);
+
+    float* y =
+        static_cast<float*>(Y->data);
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    std::cerr << "[DBG] gelu before kernel\n";
+    int ret = gelu_fp_(x, y, count);
+    std::cerr << "[DBG] gelu after kernel\n";
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    double ms =
+        std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    gelu_total_ms_ += ms;
+    gelu_count_++;
+
+    if (gelu_count_ == 6) {
+      std::cerr
+          << "[NEW OP PROFILE] GELU count=" << gelu_count_
+          << " total_ms=" << gelu_total_ms_
+          << " avg_ms=" << gelu_total_ms_ / gelu_count_
+          << "\n";
+    }
+
+    ICHECK_EQ(ret, 0)
+        << "whisper_gelu_f32 failed";
+  }
+
+
+  void kiwipedia_encoder_softmax(size_t idx) {
+    std::cerr << "[DBG] enter softmax\n";
+    EnsureOpsLoaded();
+
+    auto inputs = nodes_[idx].GetInputs();
+
+    ICHECK_GE(inputs.size(), 1)
+        << "kiwipedia.encoder_softmax expects 1 input";
+
+    uint32_t x_eid =
+        EntryID(inputs[0]);
+
+    JSONGraphNodeEntry out_entry;
+    out_entry.id_ =
+        static_cast<uint32_t>(idx);
+    out_entry.index_ = 0;
+    out_entry.version_ = 0;
+
+    uint32_t out_eid =
+        EntryID(out_entry);
+
+    const DLTensor* X =
+        data_entry_[x_eid];
+
+    const DLTensor* Y =
+        data_entry_[out_eid];
+
+    ICHECK_GT(X->ndim, 0);
+
+    int64_t cols =
+        X->shape[X->ndim - 1];
+
+    int64_t total = 1;
+
+    for (int i = 0; i < X->ndim; ++i)
+      total *= X->shape[i];
+
+    int64_t rows =
+        total / cols;
+
+    const float* x =
+        static_cast<const float*>(X->data);
+
+    float* y =
+        static_cast<float*>(Y->data);
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    std::cerr << "[DBG] softmax before kernel\n";
+    int ret = softmax_fp_(x, y, rows, cols);
+    std::cerr << "[DBG] softmax after kernel\n";
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    double ms =
+        std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    softmax_total_ms_ += ms;
+    softmax_count_++;
+
+    if (softmax_count_ == 4) {
+      std::cerr
+          << "[NEW OP PROFILE] Softmax count=" << softmax_count_
+          << " total_ms=" << softmax_total_ms_
+          << " avg_ms=" << softmax_total_ms_ / softmax_count_
+          << "\n";
+    }
+
+
+    ICHECK_EQ(ret, 0)
+        << "whisper_softmax_f32 failed";
+  }
+
+
 
   void kiwipedia_kv_cache_kernel(size_t idx) {
     EnsureKVCacheLoaded();

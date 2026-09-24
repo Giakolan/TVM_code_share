@@ -55,7 +55,13 @@
   static bool IsSupportedKiwipediaComposite(const std::string& name) {
   static const std::unordered_set<std::string> supported = {
       "kiwipedia.matmul",
+      "kiwipedia.attention_matmul",
       "kiwipedia.kv_cache_kernel",
+      "kiwipedia.conv1d",
+      "kiwipedia.layernorm",
+      "kiwipedia.gelu",
+      "kiwipedia.encoder_softmax",
+
   };
   return supported.count(name) != 0;
   }

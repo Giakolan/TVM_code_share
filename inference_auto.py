@@ -10,6 +10,7 @@ from collections import defaultdict
 import numpy as np
 import soundfile as sf
 from scipy import signal
+import sys
 #import os
 
 # Global aggregation dict: {Name: [total_duration_us, total_count]}
@@ -50,8 +51,11 @@ tokenizer = processor.tokenizer
 
 
 # === 1. Load audio ===
-waveform, sr = sf.read("jfk.flac")
+audio_path = sys.argv[1] if len(sys.argv) > 1 else "jfk.flac"
 
+print("Audio file:", audio_path)
+
+waveform, sr = sf.read(audio_path)
 # === 2. Resample to 16kHz if needed ===
 target_sr = 16000
 if sr != target_sr:
@@ -64,17 +68,59 @@ if waveform.ndim > 1:
     waveform = waveform.mean(axis=1)
 
 # === 4. Pass into Hugging Face processor (same as torchaudio flow) ===
-inputs = processor(waveform, sampling_rate=16000, return_tensors="np")
+# === 根據重採樣後的 sample 數量選擇 Shape Bucket ===
+audio_samples = len(waveform)
+audio_duration = audio_samples / target_sr
 
-# === 5. Get float32 mel features ===
+if audio_samples <= 15 * target_sr:
+    bucket_seconds = 15
+    encoder_model_path = "./onnx/encoder_model_15s_conv_riscv.so"
+
+elif audio_samples <= 30 * target_sr:
+    bucket_seconds = 30
+
+    # 請確認這個 symlink 指向你要測試的 30 秒 Encoder
+    encoder_model_path = "./onnx/encoder_model_30s_conv_riscv.so"
+
+else:
+    raise ValueError(
+        f"目前只支援最長 30 秒音訊，收到 {audio_duration:.3f} 秒；"
+        "超過 30 秒需要先做分段。"
+    )
+
+print(f"Audio duration: {audio_duration:.3f} seconds")
+print(f"Selected bucket: {bucket_seconds} seconds")
+print(f"Encoder model: {encoder_model_path}")
+
+inputs = processor(
+    waveform,
+    sampling_rate=target_sr,
+    return_tensors="np",
+    padding="max_length",
+    max_length=bucket_seconds * target_sr,
+    truncation=True,
+)
+
 mel = inputs.input_features.astype("float32")
+
+expected_mel_frames = bucket_seconds * 100
+expected_encoder_frames = expected_mel_frames // 2
 
 print("Mel shape:", mel.shape)
 
+assert mel.shape == (
+    1,
+    80,
+    expected_mel_frames,
+), f"Unexpected Mel shape: {mel.shape}"
+
 
 # === Encoder ===
-encoder_vm = VirtualMachine(runtime.load_module("./onnx/encoder_model.so"), tvm.cpu(), profile=True)
-
+encoder_vm = VirtualMachine(
+    runtime.load_module(encoder_model_path),
+    tvm.cpu(),
+    profile=False,
+)
 # === Profile code block ===
 
 #Profile the encoder execution
@@ -88,11 +134,18 @@ encoder_vm = VirtualMachine(runtime.load_module("./onnx/encoder_model.so"), tvm.
 
 start_time = datetime.now()
 print("Start of encoder:", start_time)
-encoder_out = encoder_vm["main"](tvm.runtime.tensor(mel))  # shape: (1, 1500, 384)
+encoder_out = encoder_vm["main"](tvm.runtime.tensor(mel))  # expected shape: (1, 750, 384)
+print("Encoder output shape:", tuple(encoder_out.shape))
 end_time = datetime.now()
 print("End of encoder:", end_time)
 print("Encoder takes: ", (end_time-start_time).total_seconds())
 
+
+assert tuple(encoder_out.shape) == (
+    1,
+    expected_encoder_frames,
+    384,
+), f"Unexpected Encoder output shape: {tuple(encoder_out.shape)}"
 # === Decoder Step 0: Prefill ===
 # Initialize decoder VM with profiling enabled
 
@@ -101,13 +154,13 @@ start_token = 50258
 eos_token = tokenizer.eos_token_id
 tokens = [start_token]
 input_ids = np.array([[start_token]], dtype="int64")
-past_kvs = init_zero_past_kv()
+#past_kvs = init_zero_past_kv()
 inputs = [tvm.runtime.tensor(input_ids), encoder_out]
 
 decoder_prefill_vm = VirtualMachine(
-    runtime.load_module("./onnx/decoder_model.so"), 
-    tvm.cpu(), 
-    profile=True
+    runtime.load_module("./onnx/decoder_model_dynamic_riscv.so"),
+    tvm.cpu(),
+    profile=False
 )
 
 # Initialize empty KV (self + cross) for prefill decoder
@@ -161,9 +214,9 @@ if next_token == eos_token:
 
 # === Decoder profiling ===
 decoder_vm = VirtualMachine(
-    runtime.load_module("./onnx/decoder_with_past_model.so"), 
+    runtime.load_module("./onnx/decoder_with_past_model_dynamic_riscv.so"),
     tvm.cpu(),
-    profile=True  # Enable profiling
+    profile=False  # Enable profiling
 )
 # === Decoder profiling ===
 
